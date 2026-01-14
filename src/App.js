@@ -1,187 +1,374 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Chessboard } from 'react-chessboard';
-import { Chess } from 'chess.js'; // FEN 파싱 및 보드 상태 관리용으로만 사용
+import { Chess } from 'chess.js';
+import { Peer } from 'peerjs';
 
-// --- 상수 및 리소스 ---
-const PIECES = {
-  p: '폰 (Pawn)', n: '나이트 (Knight)', b: '비숍 (Bishop)', 
-  r: '룩 (Rook)', q: '퀸 (Queen)', k: '킹 (King)'
+// ==========================================
+// 1. CONSTANTS & TEXT RESOURCES
+// ==========================================
+
+const PIECE_NAMES = {
+  p: { KO: '폰', EN: 'Pawn' },
+  n: { KO: '나이트', EN: 'Knight' },
+  b: { KO: '비숍', EN: 'Bishop' },
+  r: { KO: '룩', EN: 'Rook' },
+  q: { KO: '퀸', EN: 'Queen' },
+  k: { KO: '킹', EN: 'King' }
 };
+
+const TEXTS = {
+  KO: {
+    title: "미믹 체스 (Mimic Chess)",
+    welcome: "미믹 체스에 오신 것을 환영합니다!",
+    localPlay: "혼자하기 (로컬)",
+    createRoom: "방 만들기 (온라인)",
+    joinRoom: "방 참가하기 (온라인)",
+    roomId: "방 ID (상대에게 공유):",
+    enterRoomId: "참가할 방 ID 입력:",
+    connect: "연결",
+    waiting: "상대방 접속 대기 중...",
+    connected: "상대방과 연결되었습니다!",
+    myTurn: "내 턴",
+    oppTurn: "상대 턴",
+    currentLogic: "현재 행마 규칙",
+    nextLogic: "다음 턴 예약",
+    standard: "자유 선택 (1턴)",
+    rules: {
+      title: "📜 게임 규칙",
+      core: "3턴부터, 직전 턴에 본인이 움직였던 기물의 행마법을 따라야 합니다.",
+      pawn: "폰 행마 시, 움직인 적 없는 기물은 2칸 전진 가능.",
+      win: "상대 킹을 잡으면 승리합니다.",
+    },
+    status: {
+      white: "백 (White)",
+      black: "흑 (Black)",
+      check: "체크!",
+      win: "승리!",
+      lose: "패배..."
+    },
+    copy: "복사",
+    restart: "다시 하기"
+  },
+  EN: {
+    title: "Mimic Chess",
+    welcome: "Welcome to Mimic Chess!",
+    localPlay: "Play Local",
+    createRoom: "Create Room",
+    joinRoom: "Join Room",
+    roomId: "Room ID (Share this):",
+    enterRoomId: "Enter Room ID:",
+    connect: "Connect",
+    waiting: "Waiting for opponent...",
+    connected: "Connected to opponent!",
+    myTurn: "My Turn",
+    oppTurn: "Opponent's Turn",
+    currentLogic: "Current Move Logic",
+    nextLogic: "Next Turn Logic",
+    standard: "Free Choice",
+    rules: {
+      title: "📜 Rules",
+      core: "From turn 3, you must mimic the piece YOU moved last turn.",
+      pawn: "With Pawn logic, unmoved pieces can dash 2 squares.",
+      win: "Capture the King to win.",
+    },
+    status: {
+      white: "White",
+      black: "Black",
+      check: "Check!",
+      win: "You Win!",
+      lose: "You Lose..."
+    },
+    copy: "Copy",
+    restart: "Restart"
+  }
+};
+
+// ==========================================
+// 2. HELPER FUNCTIONS (ENGINE)
+// ==========================================
 
 const COLS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 const ROWS = ['1', '2', '3', '4', '5', '6', '7', '8'];
 
-// --- 커스텀 엔진 헬퍼 함수 ---
+const toCoords = (sq) => ({ x: COLS.indexOf(sq[0]), y: ROWS.indexOf(sq[1]) });
+const toSquare = (x, y) => (x >= 0 && x < 8 && y >= 0 && y < 8) ? COLS[x] + ROWS[y] : null;
 
-// 좌표 변환 (e.g. 'a1' -> {x:0, y:0})
-const toCoords = (square) => ({
-  x: COLS.indexOf(square[0]),
-  y: ROWS.indexOf(square[1])
-});
+// Get piece from FEN (using chess.js as parser only)
+const getPiece = (fen, sq) => new Chess(fen).get(sq);
 
-// 좌표 역변환 (e.g. {x:0, y:0} -> 'a1')
-const toSquare = (x, y) => {
-  if (x < 0 || x > 7 || y < 0 || y > 7) return null;
-  return COLS[x] + ROWS[y];
-};
-
-// 보드 상태 파싱 (FEN -> 2D Array)
-const getBoardFromFen = (fen) => {
-  const chess = new Chess(fen);
-  const board = [];
-  for(let y=0; y<8; y++) {
-    for(let x=0; x<8; x++) {
-      const square = toSquare(x, 7-y); // chess.js board index is inverted rank
-      board.push({ square, piece: chess.get(square) });
-    }
-  }
-  return board; // array of { square: 'a8', piece: { type: 'r', color: 'b' } | null }
-};
-
-// 기물 가져오기
-const getPieceAt = (fen, square) => {
-  const chess = new Chess(fen);
-  return chess.get(square);
-};
+// ==========================================
+// 3. MAIN COMPONENT
+// ==========================================
 
 export default function App() {
-  const [game, setGame] = useState(new Chess());
-  const [fen, setFen] = useState(game.fen());
+  const [lang, setLang] = useState('KO'); // 'KO' | 'EN'
+  const t = TEXTS[lang];
+
+  // Game State
+  const [game, setGame] = useState(new Chess()); // Only for FEN management
+  const [fen, setFen] = useState("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+  const [turn, setTurn] = useState('w'); // 'w' | 'b'
   
-  // 게임 상태
-  const [turn, setTurn] = useState('w');
-  const [moveLogics, setMoveLogics] = useState({ w: 'STANDARD', b: 'STANDARD' });
-  const [history, setHistory] = useState([]); // { from, to, piece, logic }
-  const [unmoved, setUnmoved] = useState({}); // { 'a2': true, ... } -> 초기 위치 기물 추적용
-  
-  // UI 상태
+  // Mimic Logic State
+  // historyLog: { w: [pieceType1, pieceType2...], b: [...] }
+  const [moveHistory, setMoveHistory] = useState({ w: [], b: [] });
+  // unmoved: Track pieces for pawn dash
+  const [unmoved, setUnmoved] = useState({});
+
+  // Multiplayer State
+  const [mode, setMode] = useState('MENU'); // 'MENU', 'LOCAL', 'ONLINE_HOST', 'ONLINE_JOIN'
+  const [myColor, setMyColor] = useState('BOTH'); // 'w', 'b', 'BOTH'
+  const [peerId, setPeerId] = useState('');
+  const [conn, setConn] = useState(null);
+  const [joinId, setJoinId] = useState('');
+  const peerRef = useRef(null);
+
+  // UI State
   const [selectedSquare, setSelectedSquare] = useState(null);
-  const [validMoves, setValidMoves] = useState([]); // 현재 선택된 기물의 이동 가능 칸들
+  const [validMoves, setValidMoves] = useState([]);
   const [winner, setWinner] = useState(null);
 
-  // 초기화 (최초 실행 시 모든 기물을 unmoved로 설정)
+  // Initialize Unmoved
   useEffect(() => {
-    const initialUnmoved = {};
-    const tempChess = new Chess();
-    const board = tempChess.board();
-    board.forEach(row => {
-        row.forEach(piece => {
-            if(piece) initialUnmoved[piece.square] = true;
-        })
-    });
-    setUnmoved(initialUnmoved);
+    resetGame();
   }, []);
 
-  // --- 핵심: 커스텀 이동 검증 엔진 ---
-  const calculateValidMoves = (square, logicType) => {
-    const piece = getPieceAt(fen, square);
-    if (!piece) return [];
-    
-    const { x: currX, y: currY } = toCoords(square);
+  // --- ENGINE: Calculate Valid Moves ---
+  const calculateValidMoves = (square, currentFen, currentTurn, history) => {
+    const piece = getPiece(currentFen, square);
+    if (!piece || piece.color !== currentTurn) return [];
+
+    const { x: cx, y: cy } = toCoords(square);
     const moves = [];
-    const color = piece.color;
-    const opponent = color === 'w' ? 'b' : 'w';
+    const opponent = currentTurn === 'w' ? 'b' : 'w';
 
-    // 방향 벡터 정의
-    const directions = {
-      n: [[1,2],[2,1],[2,-1],[1,-2],[-1,-2],[-2,-1],[-2,1],[-1,2]], // 나이트 (점프)
-      b: [[1,1],[1,-1],[-1,-1],[-1,1]], // 비숍 (슬라이딩)
-      r: [[1,0],[-1,0],[0,1],[0,-1]], // 룩 (슬라이딩)
-      q: [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,-1],[-1,1]], // 퀸 (슬라이딩)
-      k: [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,-1],[-1,1]], // 킹 (1칸)
+    // 1. Determine Logic
+    // If it's the player's 1st turn (history length 0), Logic = Piece's own type (Standard)
+    // If history length >= 1, Logic = The piece type moved in the LAST turn (Mimic)
+    const playerHistory = history[currentTurn];
+    let logicType = piece.type; // Default (Standard)
+    
+    if (playerHistory.length >= 1) {
+      logicType = playerHistory[playerHistory.length - 1]; // Last moved piece type
+    }
+
+    // Direction Vectors
+    const vecs = {
+      n: [[1,2],[2,1],[2,-1],[1,-2],[-1,-2],[-2,-1],[-2,1],[-1,2]],
+      b: [[1,1],[1,-1],[-1,-1],[-1,1]],
+      r: [[1,0],[-1,0],[0,1],[0,-1]],
+      q: [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,-1],[-1,1]],
+      k: [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,-1],[-1,1]],
     };
 
-    const addMoveIfValid = (tx, ty) => {
-      const targetSq = toSquare(tx, ty);
-      if (!targetSq) return false; // 보드 밖
-      const targetPiece = getPieceAt(fen, targetSq);
-      
-      if (!targetPiece) {
-        moves.push(targetSq);
-        return true; // 계속 탐색 가능 (슬라이딩인 경우)
-      } else if (targetPiece.color === opponent) {
-        moves.push(targetSq);
-        return false; // 잡고 멈춤
-      } else {
-        return false; // 내 기물 막힘
+    // Helper: Add move if empty or capture
+    const tryAdd = (tx, ty) => {
+      const ts = toSquare(tx, ty);
+      if (!ts) return false; // OOB
+      const tp = getPiece(currentFen, ts);
+      if (!tp) {
+        moves.push(ts);
+        return true; // Continue sliding
+      } else if (tp.color === opponent) {
+        moves.push(ts);
+        return false; // Capture & Stop
       }
+      return false; // Blocked
     };
 
-    const logic = logicType === 'STANDARD' ? piece.type : logicType;
+    // Logic Implementation
+    const l = logicType.toLowerCase();
 
-    // 1. 슬라이딩 기물 (B, R, Q) 처리
-    if (['b', 'r', 'q'].includes(logic)) {
-      directions[logic].forEach(([dx, dy]) => {
-        let tx = currX + dx;
-        let ty = currY + dy;
-        while (addMoveIfValid(tx, ty)) {
-          tx += dx;
-          ty += dy;
-        }
+    if (['b','r','q'].includes(l)) {
+      vecs[l].forEach(([dx, dy]) => {
+        let tx = cx + dx, ty = cy + dy;
+        while(tryAdd(tx, ty)) { tx += dx; ty += dy; }
       });
     }
 
-    // 2. 점프/단발 기물 (N, K) 처리
-    if (logic === 'n') {
-       directions.n.forEach(([dx, dy]) => addMoveIfValid(currX + dx, currY + dy));
-    }
-    if (logic === 'k') {
-       directions.k.forEach(([dx, dy]) => addMoveIfValid(currX + dx, currY + dy));
+    if (l === 'n' || l === 'k') {
+      vecs[l].forEach(([dx, dy]) => tryAdd(cx + dx, cy + dy));
     }
 
-    // 3. 폰 (P) 처리 (복잡함)
-    if (logic === 'p') {
-      const dir = color === 'w' ? 1 : -1;
-      
-      // (1) 전진 1칸 (빈칸일 때만)
-      const f1 = toSquare(currX, currY + dir);
-      if (f1 && !getPieceAt(fen, f1)) {
+    if (l === 'p') {
+      const dir = currentTurn === 'w' ? 1 : -1;
+      // Move 1
+      const f1 = toSquare(cx, cy + dir);
+      if (f1 && !getPiece(currentFen, f1)) {
         moves.push(f1);
-        
-        // (2) 전진 2칸 (특수 룰: "아직 한 번도 움직이지 않았다면")
-        // 원래 폰 로직: 2번 랭크/7번 랭크일 때
-        // 미믹 룰: unmoved 상태일 때
-        const f2 = toSquare(currX, currY + dir * 2);
-        if (unmoved[square] && f2 && !getPieceAt(fen, f2) && !getPieceAt(fen, f1)) {
-           moves.push(f2);
+        // Move 2 (Dash) - if Logic is Pawn AND Piece is unmoved
+        const f2 = toSquare(cx, cy + dir*2);
+        // Note: Rule says "If current logic is Pawn, any unmoved piece can dash"
+        if (unmoved[square] && f2 && !getPiece(currentFen, f2)) {
+          moves.push(f2);
         }
       }
-
-      // (3) 대각선 공격 (상대 기물 있을 때만)
-      [[1, dir], [-1, dir]].forEach(([dx, dy]) => {
-        const targetSq = toSquare(currX + dx, currY + dy);
-        if (targetSq) {
-          const targetPiece = getPieceAt(fen, targetSq);
-          if (targetPiece && targetPiece.color === opponent) {
-            moves.push(targetSq);
-          }
+      // Capture
+      [[1,dir], [-1,dir]].forEach(([dx, dy]) => {
+        const ts = toSquare(cx+dx, cy+dy);
+        if(ts) {
+          const tp = getPiece(currentFen, ts);
+          if(tp && tp.color === opponent) moves.push(ts);
         }
       });
-      
-      // (4) 앙파상 (구현 생략 - 복잡도 줄임, 필요시 추가)
     }
 
     return moves;
   };
 
-  // --- 액션 핸들러 ---
+  // --- ACTION: Execute Move ---
+  const handleMove = (from, to) => {
+    // 1. Validate Ownership
+    const piece = getPiece(fen, from);
+    if (!piece || piece.color !== turn) return;
+    if (myColor !== 'BOTH' && myColor !== turn) return; // Not my turn in online
 
-  const handleSquareClick = (square) => {
+    // 2. Execute
+    const newFen = applyMoveToFen(fen, from, to);
+    if (!newFen) return; // Something wrong
+
+    // 3. Update State
+    const nextTurn = turn === 'w' ? 'b' : 'w';
+    const newHistory = { ...moveHistory };
+    
+    // Check Promotion for history Logic
+    // Rule: Promotion resets next logic to Pawn
+    let recordedType = piece.type;
+    const isPromotion = (piece.type === 'p' && (to[1] === '8' || to[1] === '1'));
+    if (isPromotion) recordedType = 'p';
+
+    newHistory[turn] = [...newHistory[turn], recordedType];
+
+    // Update Unmoved
+    const newUnmoved = { ...unmoved };
+    delete newUnmoved[from];
+
+    // Check Win (King Capture)
+    const target = getPiece(fen, to);
+    let win = null;
+    if (target && target.type === 'k') {
+      win = turn; // Current player wins
+    }
+
+    // Apply State Locally
+    updateGameState(newFen, nextTurn, newHistory, newUnmoved, win);
+
+    // Send to Peer if Online
+    if (conn && conn.open) {
+      conn.send({
+        type: 'MOVE',
+        data: { fen: newFen, turn: nextTurn, history: newHistory, unmoved: newUnmoved, winner: win }
+      });
+    }
+  };
+
+  const applyMoveToFen = (currentFen, from, to) => {
+    const temp = new Chess(currentFen);
+    const p = temp.get(from);
+    temp.remove(from);
+    
+    // Promotion always to Queen for power, but Logic resets to Pawn
+    let type = p.type;
+    if (p.type === 'p' && (to[1] === '1' || to[1] === '8')) type = 'q';
+    
+    temp.put({ type, color: p.color }, to);
+    
+    // Manual FEN update for turn
+    const tokens = temp.fen().split(' ');
+    tokens[1] = p.color === 'w' ? 'b' : 'w';
+    return tokens.join(' ');
+  };
+
+  const updateGameState = (newFen, newTurn, newHistory, newUnmoved, newWinner) => {
+    setFen(newFen);
+    setGame(new Chess(newFen));
+    setTurn(newTurn);
+    setMoveHistory(newHistory);
+    setUnmoved(newUnmoved);
+    setWinner(newWinner);
+    
+    setSelectedSquare(null);
+    setValidMoves([]);
+  };
+
+  const resetGame = () => {
+    const startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    const startUnmoved = {};
+    ['a','b','c','d','e','f','g','h'].forEach(c => {
+      ['1','2','7','8'].forEach(r => {
+        const sq = c+r;
+        const p = getPiece(startFen, sq);
+        if(p) startUnmoved[sq] = true;
+      });
+    });
+
+    setFen(startFen);
+    setGame(new Chess(startFen));
+    setTurn('w');
+    setMoveHistory({ w: [], b: [] });
+    setUnmoved(startUnmoved);
+    setWinner(null);
+    setSelectedSquare(null);
+    setValidMoves([]);
+  };
+
+  // --- PEERJS: Networking ---
+  useEffect(() => {
+    if (mode === 'ONLINE_HOST' && !peerRef.current) {
+      const peer = new Peer();
+      peer.on('open', (id) => {
+        setPeerId(id);
+      });
+      peer.on('connection', (connection) => {
+        setConn(connection);
+        setupConnection(connection);
+        // Send Initial State
+        connection.on('open', () => {
+           connection.send({ type: 'SYNC', data: { fen, turn, history: moveHistory, unmoved, winner } });
+        });
+      });
+      peerRef.current = peer;
+    }
+    
+    if (mode === 'ONLINE_JOIN' && !peerRef.current) {
+       const peer = new Peer();
+       peerRef.current = peer;
+       // We wait for user to input ID and click Connect
+    }
+  }, [mode]);
+
+  const joinGame = () => {
+    if (!peerRef.current || !joinId) return;
+    const connection = peerRef.current.connect(joinId);
+    setConn(connection);
+    setupConnection(connection);
+  };
+
+  const setupConnection = (connection) => {
+    connection.on('data', (data) => {
+      if (data.type === 'MOVE' || data.type === 'SYNC') {
+        const { fen, turn, history, unmoved, winner } = data.data;
+        updateGameState(fen, turn, history, unmoved, winner);
+      }
+    });
+  };
+
+  // --- UI HANDLERS ---
+  const onSquareClick = (square) => {
     if (winner) return;
+    if (myColor !== 'BOTH' && myColor !== turn) return; // Not your turn
 
-    // 1. 이동 실행 (선택된 칸이 유효 이동 목록에 있을 때)
+    // Move
     if (selectedSquare && validMoves.includes(square)) {
-      executeMove(selectedSquare, square);
+      handleMove(selectedSquare, square);
       return;
     }
 
-    // 2. 기물 선택
-    const piece = getPieceAt(fen, square);
-    if (piece && piece.color === turn) {
+    // Select
+    const p = getPiece(fen, square);
+    if (p && p.color === turn) {
       setSelectedSquare(square);
-      // 현재 턴의 행마 규칙 적용
-      const logic = moveLogics[turn] === 'STANDARD' ? piece.type : moveLogics[turn];
-      const moves = calculateValidMoves(square, logic);
+      const moves = calculateValidMoves(square, fen, turn, moveHistory);
       setValidMoves(moves);
     } else {
       setSelectedSquare(null);
@@ -189,129 +376,139 @@ export default function App() {
     }
   };
 
-  const executeMove = (from, to) => {
-    const movingPiece = getPieceAt(fen, from);
-    const targetPiece = getPieceAt(fen, to);
-
-    // 승리 조건: 킹 잡기
-    if (targetPiece && targetPiece.type === 'k') {
-      setWinner(turn === 'w' ? 'White' : 'Black');
-    }
-
-    // FEN 조작 (강제 이동)
-    const tempGame = new Chess(fen);
-    tempGame.remove(from);
-    tempGame.put({ type: movingPiece.type, color: movingPiece.color }, to); // 프로모션 로직 추가 필요
-    
-    // 프로모션 처리 (끝에 닿으면 퀸으로 변신 - 룰 4)
-    let isPromotion = false;
-    if (movingPiece.type === 'p') {
-      if ((movingPiece.color === 'w' && to[1] === '8') || (movingPiece.color === 'b' && to[1] === '1')) {
-        tempGame.put({ type: 'q', color: movingPiece.color }, to);
-        isPromotion = true;
-      }
-    }
-
-    // 턴 교체 및 상태 업데이트
-    const nextTurn = turn === 'w' ? 'b' : 'w';
-    let nextFen = tempGame.fen();
-    
-    // FEN 문자열에서 턴 정보(두 번째 필드) 수동 교체
-    const fenParts = nextFen.split(' ');
-    fenParts[1] = nextTurn; 
-    nextFen = fenParts.join(' ');
-
-    // 미믹 로직 업데이트
-    const nextLogics = { ...moveLogics };
-    // 내가 방금 움직인 기물이 나의 '다음' 행마법이 됨
-    // (단, 프로모션 직후에는 폰 행마로 리셋 - 룰 4)
-    nextLogics[turn] = isPromotion ? 'p' : movingPiece.type;
-
-    setFen(nextFen);
-    setGame(new Chess(nextFen));
-    setTurn(nextTurn);
-    setMoveLogics(nextLogics);
-    setHistory([...history, { from, to, piece: movingPiece.type }]);
-    
-    // 이동했으므로 unmoved 상태 제거
-    const newUnmoved = { ...unmoved };
-    delete newUnmoved[from];
-    setUnmoved(newUnmoved);
-
-    // UI 초기화
-    setSelectedSquare(null);
-    setValidMoves([]);
+  // Render Helpers
+  const getCurrentLogic = (player) => {
+    const hist = moveHistory[player];
+    if (hist.length === 0) return t.standard;
+    const lastType = hist[hist.length - 1];
+    return PIECE_NAMES[lastType] ? PIECE_NAMES[lastType][lang] : lastType;
   };
 
-  // --- 렌더링 헬퍼 ---
-  const getCustomSquareStyles = () => {
-    const styles = {};
-    validMoves.forEach(sq => {
-      styles[sq] = {
-        background: getPieceAt(fen, sq) 
-          ? 'radial-gradient(circle, rgba(255,0,0,0.5) 20%, transparent 20%)' 
-          : 'radial-gradient(circle, rgba(0,0,0,0.2) 20%, transparent 20%)',
-        borderRadius: '50%'
-      };
-    });
-    if (selectedSquare) {
-      styles[selectedSquare] = { background: 'rgba(255, 255, 0, 0.4)' };
-    }
-    return styles;
-  };
+  // --- VIEW: Main Menu ---
+  if (mode === 'MENU') {
+    return (
+      <div style={styles.container}>
+        <h1>{t.title}</h1>
+        <p>{t.welcome}</p>
+        <div style={styles.menu}>
+          <button style={styles.btn} onClick={() => { setMode('LOCAL'); setMyColor('BOTH'); }}>{t.localPlay}</button>
+          <button style={styles.btn} onClick={() => { setMode('ONLINE_HOST'); setMyColor('w'); }}>{t.createRoom}</button>
+          <button style={styles.btn} onClick={() => { setMode('ONLINE_JOIN'); setMyColor('b'); }}>{t.joinRoom}</button>
+        </div>
+        <div style={{marginTop: 20}}>
+           <button onClick={() => setLang(lang === 'KO' ? 'EN' : 'KO')}>{lang === 'KO' ? 'English' : '한국어'}</button>
+        </div>
+      </div>
+    );
+  }
 
+  // --- VIEW: Lobby (Host) ---
+  if (mode === 'ONLINE_HOST' && !conn) {
+    return (
+      <div style={styles.container}>
+        <h2>{t.createRoom}</h2>
+        <p>{t.waiting}</p>
+        <div style={styles.box}>
+           {t.roomId} <b>{peerId}</b>
+           <button onClick={() => navigator.clipboard.writeText(peerId)} style={{marginLeft:10}}>{t.copy}</button>
+        </div>
+        <button style={styles.backBtn} onClick={() => window.location.reload()}>Back</button>
+      </div>
+    );
+  }
+
+  // --- VIEW: Lobby (Join) ---
+  if (mode === 'ONLINE_JOIN' && !conn) {
+    return (
+      <div style={styles.container}>
+        <h2>{t.joinRoom}</h2>
+        <input 
+          style={styles.input}
+          placeholder="Room ID" 
+          value={joinId} 
+          onChange={e => setJoinId(e.target.value)} 
+        />
+        <button style={styles.btn} onClick={joinGame}>{t.connect}</button>
+        <button style={styles.backBtn} onClick={() => window.location.reload()}>Back</button>
+      </div>
+    );
+  }
+
+  // --- VIEW: Game Board ---
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'sans-serif', padding: '20px', background: '#f0f2f5', minHeight: '100vh' }}>
-      <h1 style={{ color: '#333' }}>Mimic Chess (Engine v2)</h1>
-      
-      {/* 상태 표시 패널 */}
-      <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
-        <StatusCard player="White" active={turn === 'w'} logic={moveLogics.w} />
-        <StatusCard player="Black" active={turn === 'b'} logic={moveLogics.b} />
+    <div style={styles.gameContainer}>
+      <div style={styles.header}>
+         <h3>{t.title}</h3>
+         <button onClick={() => setLang(l => l==='KO'?'EN':'KO')}>{lang}</button>
       </div>
 
-      {winner && <h2 style={{ color: 'red', animation: 'bounce 1s infinite' }}>🏆 {winner} Wins! 🏆</h2>}
+      <div style={styles.statusPanel}>
+        <div style={{...styles.playerCard, border: turn==='w'?'3px solid gold':'1px solid #ccc'}}>
+           <div>{t.status.white} {turn==='w' && '●'}</div>
+           <div>Logic: <b>{getCurrentLogic('w')}</b></div>
+        </div>
+        <div style={{...styles.playerCard, border: turn==='b'?'3px solid gold':'1px solid #ccc'}}>
+           <div>{t.status.black} {turn==='b' && '●'}</div>
+           <div>Logic: <b>{getCurrentLogic('b')}</b></div>
+        </div>
+      </div>
 
-      <div style={{ width: '500px', maxWidth: '90vw' }}>
+      {winner && (
+        <div style={styles.winnerOverlay}>
+           <h2>{winner === 'w' ? t.status.white : t.status.black} {t.status.win}</h2>
+           <button onClick={resetGame}>{t.restart}</button>
+        </div>
+      )}
+
+      <div style={styles.boardWrapper}>
         <Chessboard 
           position={fen} 
-          onSquareClick={handleSquareClick}
-          customSquareStyles={getCustomSquareStyles()}
-          boardOrientation={turn === 'w' ? 'white' : 'black'} // 턴에 따라 보드 회전 (옵션)
+          onSquareClick={onSquareClick}
+          customSquareStyles={getSquareStyles(validMoves, selectedSquare, fen)}
+          boardOrientation={myColor === 'b' ? 'black' : 'white'}
         />
       </div>
 
-      <button 
-        onClick={() => window.location.reload()}
-        style={{ marginTop: '20px', padding: '10px 20px', background: '#333', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
-      >
-        Restart Game
-      </button>
-
-      {/* 룰 설명 */}
-      <div style={{ marginTop: '30px', maxWidth: '600px', background: '#fff', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-        <h3>📜 Rules (엄격 모드 적용됨)</h3>
-        <ul style={{ lineHeight: '1.6' }}>
-          <li><b>Mimicry:</b> 3턴부터 '직전 턴에 내가 움직인 기물'의 이동 규칙을 따라야 합니다.</li>
-          <li><b>Pawn Logic:</b> 폰 행마일 때, <b>움직인 적 없는 기물</b>은 2칸 전진이 가능합니다. (충돌 체크 포함)</li>
-          <li><b>Valid Move:</b> 이제 장애물을 뚫거나(나이트 제외) 기묘한 이동을 할 수 없습니다. 물리 엔진이 적용되었습니다.</li>
-          <li><b>Winning:</b> 상대 <b>킹을 잡으면</b> 승리합니다. (복잡한 체크메이트 판정 대신 직관적 룰 채택)</li>
-        </ul>
+      <div style={styles.rules}>
+         <h4>{t.rules.title}</h4>
+         <ul>
+           <li>{t.rules.core}</li>
+           <li>{t.rules.pawn}</li>
+           <li>{t.rules.win}</li>
+         </ul>
+         {mode !== 'LOCAL' && <div style={{color:'blue'}}>{conn ? t.connected : t.waiting}</div>}
       </div>
     </div>
   );
 }
 
-const StatusCard = ({ player, active, logic }) => (
-  <div style={{ 
-    padding: '15px 25px', 
-    borderRadius: '10px', 
-    background: active ? '#fff' : '#e0e0e0',
-    border: active ? `3px solid ${player === 'White' ? '#f1c40f' : '#34495e'}` : '1px solid #ccc',
-    opacity: active ? 1 : 0.6,
-    transition: 'all 0.3s'
-  }}>
-    <h3 style={{ margin: '0 0 5px 0' }}>{player} {active && '●'}</h3>
-    <div>Logic: <b>{logic === 'STANDARD' ? 'Standard' : PIECES[logic]}</b></div>
-  </div>
-);
+// STYLES
+const getSquareStyles = (moves, selected, fen) => {
+  const s = {};
+  moves.forEach(m => {
+     const p = getPiece(fen, m);
+     s[m] = { 
+       background: p ? 'radial-gradient(circle, rgba(255,0,0,0.5) 20%, transparent 20%)' 
+                     : 'radial-gradient(circle, rgba(0,0,0,0.2) 20%, transparent 20%)',
+       borderRadius: '50%'
+     };
+  });
+  if(selected) s[selected] = { background: 'rgba(255, 255, 0, 0.4)' };
+  return s;
+};
+
+const styles = {
+  container: { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100vh', fontFamily:'sans-serif', gap: 20 },
+  gameContainer: { display:'flex', flexDirection:'column', alignItems:'center', padding:20, fontFamily:'sans-serif' },
+  menu: { display:'flex', flexDirection:'column', gap: 10 },
+  btn: { padding: '10px 20px', fontSize: '1rem', cursor: 'pointer', background:'#333', color:'#fff', border:'none', borderRadius:5 },
+  backBtn: { marginTop: 20, cursor:'pointer', background:'transparent', border:'none', textDecoration:'underline' },
+  box: { padding: 20, background: '#eee', borderRadius: 5 },
+  input: { padding: 10, fontSize: '1rem', marginBottom: 10 },
+  header: { display:'flex', justifyContent:'space-between', width:'100%', maxWidth:500, marginBottom:10 },
+  statusPanel: { display:'flex', gap:20, marginBottom:10, width:'100%', maxWidth:500 },
+  playerCard: { flex:1, padding:10, borderRadius:8, background:'#f9f9f9', textAlign:'center' },
+  boardWrapper: { width:'100%', maxWidth:500, height:'auto' },
+  rules: { marginTop:20, maxWidth:500, fontSize:'0.9rem', lineHeight:1.5, background:'#fff', padding:15, borderRadius:8, boxShadow:'0 2px 5px rgba(0,0,0,0.1)' },
+  winnerOverlay: { position:'absolute', top:'40%', background:'rgba(0,0,0,0.8)', color:'#fff', padding:30, borderRadius:10, zIndex:100, textAlign:'center' }
+};
