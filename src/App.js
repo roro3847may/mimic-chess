@@ -1,11 +1,9 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Chessboard } from 'react-chessboard';
 import { Chess } from 'chess.js';
 import { Peer } from 'peerjs';
 
-// ==========================================
-// 1. CONSTANTS & TEXT RESOURCES
-// ==========================================
+// --- 상수 및 리소스 ---
 
 const PIECE_NAMES = {
   p: { KO: '폰', EN: 'Pawn' },
@@ -18,36 +16,32 @@ const PIECE_NAMES = {
 
 const TEXTS = {
   KO: {
-    title: "미믹 체스 (Mimic Chess)",
+    title: "미믹 체스",
     welcome: "미믹 체스에 오신 것을 환영합니다!",
     localPlay: "혼자하기 (로컬)",
-    createRoom: "방 만들기 (온라인)",
-    joinRoom: "방 참가하기 (온라인)",
-    roomId: "방 ID (상대에게 공유):",
+    createRoom: "방 만들기",
+    joinRoom: "방 참가하기",
+    roomId: "방 ID (복사해서 친구에게 공유):",
     enterRoomId: "참가할 방 ID 입력:",
-    connect: "연결",
+    connect: "입장하기",
     waiting: "상대방 접속 대기 중...",
-    connected: "상대방과 연결되었습니다!",
-    myTurn: "내 턴",
-    oppTurn: "상대 턴",
-    currentLogic: "현재 행마 규칙",
-    nextLogic: "다음 턴 예약",
-    standard: "자유 선택 (1턴)",
-    rules: {
-      title: "📜 게임 규칙",
-      core: "3턴부터, 직전 턴에 본인이 움직였던 기물의 행마법을 따라야 합니다.",
-      pawn: "폰 행마 시, 움직인 적 없는 기물은 2칸 전진 가능.",
-      win: "상대 킹을 잡으면 승리합니다.",
-    },
+    connected: "연결되었습니다! 게임 시작!",
     status: {
       white: "백 (White)",
       black: "흑 (Black)",
-      check: "체크!",
       win: "승리!",
-      lose: "패배..."
+      lose: "패배...",
+      yourTurn: "당신의 턴입니다!",
+      oppTurn: "상대방의 턴입니다..."
+    },
+    rules: {
+      btn: "규칙 보기",
+      content: "3턴부터 직전 턴에 자신이 움직인 기물의 행마를 따라야 합니다. (폰 행마 시 미이동 기물 2칸 전진 가능)"
     },
     copy: "복사",
-    restart: "다시 하기"
+    copied: "복사됨!",
+    restart: "메인으로",
+    langBtn: "English"
   },
   EN: {
     title: "Mimic Chess",
@@ -57,67 +51,53 @@ const TEXTS = {
     joinRoom: "Join Room",
     roomId: "Room ID (Share this):",
     enterRoomId: "Enter Room ID:",
-    connect: "Connect",
+    connect: "Join",
     waiting: "Waiting for opponent...",
-    connected: "Connected to opponent!",
-    myTurn: "My Turn",
-    oppTurn: "Opponent's Turn",
-    currentLogic: "Current Move Logic",
-    nextLogic: "Next Turn Logic",
-    standard: "Free Choice",
-    rules: {
-      title: "📜 Rules",
-      core: "From turn 3, you must mimic the piece YOU moved last turn.",
-      pawn: "With Pawn logic, unmoved pieces can dash 2 squares.",
-      win: "Capture the King to win.",
-    },
+    connected: "Connected! Game Start!",
     status: {
       white: "White",
       black: "Black",
-      check: "Check!",
       win: "You Win!",
-      lose: "You Lose..."
+      lose: "You Lose...",
+      yourTurn: "Your Turn!",
+      oppTurn: "Opponent's Turn..."
+    },
+    rules: {
+      btn: "Rules",
+      content: "From turn 3, you must mimic the piece YOU moved last turn. (Unmoved pieces can dash 2 squares with Pawn Logic)"
     },
     copy: "Copy",
-    restart: "Restart"
+    copied: "Copied!",
+    restart: "Main Menu",
+    langBtn: "한국어"
   }
 };
 
-// ==========================================
-// 2. HELPER FUNCTIONS (ENGINE)
-// ==========================================
-
+// --- 엔진 헬퍼 ---
 const COLS = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 const ROWS = ['1', '2', '3', '4', '5', '6', '7', '8'];
-
 const toCoords = (sq) => ({ x: COLS.indexOf(sq[0]), y: ROWS.indexOf(sq[1]) });
 const toSquare = (x, y) => (x >= 0 && x < 8 && y >= 0 && y < 8) ? COLS[x] + ROWS[y] : null;
-
-// Get piece from FEN (using chess.js as parser only)
-const getPiece = (fen, sq) => new Chess(fen).get(sq);
-
-// ==========================================
-// 3. MAIN COMPONENT
-// ==========================================
+const getPiece = (fen, sq) => {
+  try {
+    return new Chess(fen).get(sq);
+  } catch(e) { return null; }
+};
 
 export default function App() {
-  const [lang, setLang] = useState('KO'); // 'KO' | 'EN'
+  const [lang, setLang] = useState('KO');
   const t = TEXTS[lang];
 
-  // Game State
-  const [game, setGame] = useState(new Chess()); // Only for FEN management
+  // Game Logic State
   const [fen, setFen] = useState("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-  const [turn, setTurn] = useState('w'); // 'w' | 'b'
-  
-  // Mimic Logic State
-  // historyLog: { w: [pieceType1, pieceType2...], b: [...] }
+  const [turn, setTurn] = useState('w');
   const [moveHistory, setMoveHistory] = useState({ w: [], b: [] });
-  // unmoved: Track pieces for pawn dash
   const [unmoved, setUnmoved] = useState({});
+  const [winner, setWinner] = useState(null);
 
-  // Multiplayer State
-  const [mode, setMode] = useState('MENU'); // 'MENU', 'LOCAL', 'ONLINE_HOST', 'ONLINE_JOIN'
-  const [myColor, setMyColor] = useState('BOTH'); // 'w', 'b', 'BOTH'
+  // Networking State
+  const [mode, setMode] = useState('MENU');
+  const [myColor, setMyColor] = useState('BOTH');
   const [peerId, setPeerId] = useState('');
   const [conn, setConn] = useState(null);
   const [joinId, setJoinId] = useState('');
@@ -126,14 +106,19 @@ export default function App() {
   // UI State
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [validMoves, setValidMoves] = useState([]);
-  const [winner, setWinner] = useState(null);
+  const [showRules, setShowRules] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState(false);
 
-  // Initialize Unmoved
+  // 초기화
   useEffect(() => {
     resetGame();
+    // Cleanup Peer on unmount
+    return () => {
+      if(peerRef.current) peerRef.current.destroy();
+    }
   }, []);
 
-  // --- ENGINE: Calculate Valid Moves ---
+  // --- ENGINE: 유효 이동 계산 ---
   const calculateValidMoves = (square, currentFen, currentTurn, history) => {
     const piece = getPiece(currentFen, square);
     if (!piece || piece.color !== currentTurn) return [];
@@ -142,17 +127,12 @@ export default function App() {
     const moves = [];
     const opponent = currentTurn === 'w' ? 'b' : 'w';
 
-    // 1. Determine Logic
-    // If it's the player's 1st turn (history length 0), Logic = Piece's own type (Standard)
-    // If history length >= 1, Logic = The piece type moved in the LAST turn (Mimic)
     const playerHistory = history[currentTurn];
-    let logicType = piece.type; // Default (Standard)
-    
-    if (playerHistory.length >= 1) {
-      logicType = playerHistory[playerHistory.length - 1]; // Last moved piece type
+    let logicType = piece.type; 
+    if (playerHistory && playerHistory.length >= 1) {
+      logicType = playerHistory[playerHistory.length - 1]; 
     }
 
-    // Direction Vectors
     const vecs = {
       n: [[1,2],[2,1],[2,-1],[1,-2],[-1,-2],[-2,-1],[-2,1],[-1,2]],
       b: [[1,1],[1,-1],[-1,-1],[-1,1]],
@@ -161,22 +141,20 @@ export default function App() {
       k: [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,-1],[-1,1]],
     };
 
-    // Helper: Add move if empty or capture
     const tryAdd = (tx, ty) => {
       const ts = toSquare(tx, ty);
-      if (!ts) return false; // OOB
+      if (!ts) return false;
       const tp = getPiece(currentFen, ts);
       if (!tp) {
         moves.push(ts);
-        return true; // Continue sliding
+        return true; 
       } else if (tp.color === opponent) {
         moves.push(ts);
-        return false; // Capture & Stop
+        return false; 
       }
-      return false; // Blocked
+      return false; 
     };
 
-    // Logic Implementation
     const l = logicType.toLowerCase();
 
     if (['b','r','q'].includes(l)) {
@@ -185,25 +163,19 @@ export default function App() {
         while(tryAdd(tx, ty)) { tx += dx; ty += dy; }
       });
     }
-
     if (l === 'n' || l === 'k') {
       vecs[l].forEach(([dx, dy]) => tryAdd(cx + dx, cy + dy));
     }
-
     if (l === 'p') {
       const dir = currentTurn === 'w' ? 1 : -1;
-      // Move 1
       const f1 = toSquare(cx, cy + dir);
       if (f1 && !getPiece(currentFen, f1)) {
         moves.push(f1);
-        // Move 2 (Dash) - if Logic is Pawn AND Piece is unmoved
         const f2 = toSquare(cx, cy + dir*2);
-        // Note: Rule says "If current logic is Pawn, any unmoved piece can dash"
         if (unmoved[square] && f2 && !getPiece(currentFen, f2)) {
           moves.push(f2);
         }
       }
-      // Capture
       [[1,dir], [-1,dir]].forEach(([dx, dy]) => {
         const ts = toSquare(cx+dx, cy+dy);
         if(ts) {
@@ -212,81 +184,61 @@ export default function App() {
         }
       });
     }
-
     return moves;
   };
 
-  // --- ACTION: Execute Move ---
   const handleMove = (from, to) => {
-    // 1. Validate Ownership
     const piece = getPiece(fen, from);
     if (!piece || piece.color !== turn) return;
-    if (myColor !== 'BOTH' && myColor !== turn) return; // Not my turn in online
+    if (myColor !== 'BOTH' && myColor !== turn) return;
 
-    // 2. Execute
-    const newFen = applyMoveToFen(fen, from, to);
-    if (!newFen) return; // Something wrong
-
-    // 3. Update State
-    const nextTurn = turn === 'w' ? 'b' : 'w';
-    const newHistory = { ...moveHistory };
+    // Apply Move
+    const temp = new Chess(fen);
+    temp.remove(from);
+    let type = piece.type;
+    // Promotion always Queen visually, but Logic resets to Pawn
+    if (piece.type === 'p' && (to[1] === '1' || to[1] === '8')) type = 'q';
+    temp.put({ type, color: piece.color }, to);
     
-    // Check Promotion for history Logic
-    // Rule: Promotion resets next logic to Pawn
-    let recordedType = piece.type;
-    const isPromotion = (piece.type === 'p' && (to[1] === '8' || to[1] === '1'));
-    if (isPromotion) recordedType = 'p';
+    // Update FEN manually
+    const tokens = temp.fen().split(' ');
+    tokens[1] = piece.color === 'w' ? 'b' : 'w';
+    const newFen = tokens.join(' ');
 
+    // Update History
+    let recordedType = piece.type;
+    if (piece.type === 'p' && (to[1] === '8' || to[1] === '1')) recordedType = 'p';
+    
+    const newHistory = { ...moveHistory };
+    if (!newHistory[turn]) newHistory[turn] = [];
     newHistory[turn] = [...newHistory[turn], recordedType];
 
-    // Update Unmoved
     const newUnmoved = { ...unmoved };
     delete newUnmoved[from];
 
-    // Check Win (King Capture)
+    // Win Check
     const target = getPiece(fen, to);
-    let win = null;
+    let newWinner = null;
     if (target && target.type === 'k') {
-      win = turn; // Current player wins
+      newWinner = turn;
     }
 
-    // Apply State Locally
-    updateGameState(newFen, nextTurn, newHistory, newUnmoved, win);
+    updateGameState(newFen, tokens[1], newHistory, newUnmoved, newWinner);
 
-    // Send to Peer if Online
     if (conn && conn.open) {
       conn.send({
         type: 'MOVE',
-        data: { fen: newFen, turn: nextTurn, history: newHistory, unmoved: newUnmoved, winner: win }
+        data: { fen: newFen, turn: tokens[1], history: newHistory, unmoved: newUnmoved, winner: newWinner }
       });
     }
   };
 
-  const applyMoveToFen = (currentFen, from, to) => {
-    const temp = new Chess(currentFen);
-    const p = temp.get(from);
-    temp.remove(from);
-    
-    // Promotion always to Queen for power, but Logic resets to Pawn
-    let type = p.type;
-    if (p.type === 'p' && (to[1] === '1' || to[1] === '8')) type = 'q';
-    
-    temp.put({ type, color: p.color }, to);
-    
-    // Manual FEN update for turn
-    const tokens = temp.fen().split(' ');
-    tokens[1] = p.color === 'w' ? 'b' : 'w';
-    return tokens.join(' ');
-  };
-
-  const updateGameState = (newFen, newTurn, newHistory, newUnmoved, newWinner) => {
-    setFen(newFen);
-    setGame(new Chess(newFen));
-    setTurn(newTurn);
-    setMoveHistory(newHistory);
-    setUnmoved(newUnmoved);
-    setWinner(newWinner);
-    
+  const updateGameState = (f, t, h, u, w) => {
+    setFen(f);
+    setTurn(t);
+    setMoveHistory(h);
+    setUnmoved(u);
+    setWinner(w);
     setSelectedSquare(null);
     setValidMoves([]);
   };
@@ -301,9 +253,7 @@ export default function App() {
         if(p) startUnmoved[sq] = true;
       });
     });
-
     setFen(startFen);
-    setGame(new Chess(startFen));
     setTurn('w');
     setMoveHistory({ w: [], b: [] });
     setUnmoved(startUnmoved);
@@ -312,172 +262,162 @@ export default function App() {
     setValidMoves([]);
   };
 
-  // --- PEERJS: Networking ---
+  // --- PEERJS ---
   useEffect(() => {
     if (mode === 'ONLINE_HOST' && !peerRef.current) {
       const peer = new Peer();
-      peer.on('open', (id) => {
-        setPeerId(id);
-      });
-      peer.on('connection', (connection) => {
-        setConn(connection);
-        setupConnection(connection);
-        // Send Initial State
-        connection.on('open', () => {
-           connection.send({ type: 'SYNC', data: { fen, turn, history: moveHistory, unmoved, winner } });
-        });
+      peer.on('open', (id) => setPeerId(id));
+      peer.on('connection', (c) => {
+        setConn(c);
+        c.on('data', (d) => { if(d.type==='MOVE' || d.type==='SYNC') updateGameState(d.data.fen, d.data.turn, d.data.history, d.data.unmoved, d.data.winner); });
+        c.on('open', () => c.send({ type: 'SYNC', data: { fen, turn, history: moveHistory, unmoved, winner } }));
       });
       peerRef.current = peer;
     }
-    
     if (mode === 'ONLINE_JOIN' && !peerRef.current) {
        const peer = new Peer();
        peerRef.current = peer;
-       // We wait for user to input ID and click Connect
     }
   }, [mode]);
 
   const joinGame = () => {
     if (!peerRef.current || !joinId) return;
-    const connection = peerRef.current.connect(joinId);
-    setConn(connection);
-    setupConnection(connection);
+    const c = peerRef.current.connect(joinId);
+    setConn(c);
+    c.on('data', (d) => { if(d.type==='MOVE' || d.type==='SYNC') updateGameState(d.data.fen, d.data.turn, d.data.history, d.data.unmoved, d.data.winner); });
   };
 
-  const setupConnection = (connection) => {
-    connection.on('data', (data) => {
-      if (data.type === 'MOVE' || data.type === 'SYNC') {
-        const { fen, turn, history, unmoved, winner } = data.data;
-        updateGameState(fen, turn, history, unmoved, winner);
-      }
-    });
-  };
-
-  // --- UI HANDLERS ---
+  // --- UI Handlers ---
   const onSquareClick = (square) => {
-    if (winner) return;
-    if (myColor !== 'BOTH' && myColor !== turn) return; // Not your turn
-
-    // Move
+    if (winner || (myColor !== 'BOTH' && myColor !== turn)) return;
     if (selectedSquare && validMoves.includes(square)) {
       handleMove(selectedSquare, square);
       return;
     }
-
-    // Select
     const p = getPiece(fen, square);
     if (p && p.color === turn) {
       setSelectedSquare(square);
-      const moves = calculateValidMoves(square, fen, turn, moveHistory);
-      setValidMoves(moves);
+      setValidMoves(calculateValidMoves(square, fen, turn, moveHistory));
     } else {
       setSelectedSquare(null);
       setValidMoves([]);
     }
   };
 
-  // Render Helpers
-  const getCurrentLogic = (player) => {
-    const hist = moveHistory[player];
-    if (hist.length === 0) return t.standard;
-    const lastType = hist[hist.length - 1];
-    return PIECE_NAMES[lastType] ? PIECE_NAMES[lastType][lang] : lastType;
+  const getLogicName = (player) => {
+    const h = moveHistory[player];
+    if (!h || h.length === 0) return PIECE_NAMES[player === 'w' ? 'p' : 'n'][lang]; // Just display fallback or standard
+    const type = h[h.length - 1];
+    return PIECE_NAMES[type] ? PIECE_NAMES[type][lang] : type.toUpperCase();
   };
 
-  // --- VIEW: Main Menu ---
+  // --- RENDER ---
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 600;
+
+  // 1. MENU
   if (mode === 'MENU') {
     return (
       <div style={styles.container}>
-        <h1>{t.title}</h1>
-        <p>{t.welcome}</p>
-        <div style={styles.menu}>
-          <button style={styles.btn} onClick={() => { setMode('LOCAL'); setMyColor('BOTH'); }}>{t.localPlay}</button>
-          <button style={styles.btn} onClick={() => { setMode('ONLINE_HOST'); setMyColor('w'); }}>{t.createRoom}</button>
-          <button style={styles.btn} onClick={() => { setMode('ONLINE_JOIN'); setMyColor('b'); }}>{t.joinRoom}</button>
-        </div>
-        <div style={{marginTop: 20}}>
-           <button onClick={() => setLang(lang === 'KO' ? 'EN' : 'KO')}>{lang === 'KO' ? 'English' : '한국어'}</button>
+        <div style={styles.card}>
+          <h1 style={styles.title}>{t.title}</h1>
+          <p style={{marginBottom: 30}}>{t.welcome}</p>
+          <div style={styles.menuGrid}>
+            <button style={styles.menuBtn} onClick={() => { setMode('LOCAL'); setMyColor('BOTH'); resetGame(); }}>🕹️ {t.localPlay}</button>
+            <button style={styles.menuBtn} onClick={() => { setMode('ONLINE_HOST'); setMyColor('w'); resetGame(); }}>🏠 {t.createRoom}</button>
+            <button style={styles.menuBtn} onClick={() => { setMode('ONLINE_JOIN'); setMyColor('b'); resetGame(); }}>🚀 {t.joinRoom}</button>
+          </div>
+          <button style={styles.langBtn} onClick={() => setLang(lang === 'KO' ? 'EN' : 'KO')}>🌐 {t.langBtn}</button>
         </div>
       </div>
     );
   }
 
-  // --- VIEW: Lobby (Host) ---
-  if (mode === 'ONLINE_HOST' && !conn) {
+  // 2. LOBBY
+  if ((mode === 'ONLINE_HOST' || mode === 'ONLINE_JOIN') && !conn) {
     return (
       <div style={styles.container}>
-        <h2>{t.createRoom}</h2>
-        <p>{t.waiting}</p>
-        <div style={styles.box}>
-           {t.roomId} <b>{peerId}</b>
-           <button onClick={() => navigator.clipboard.writeText(peerId)} style={{marginLeft:10}}>{t.copy}</button>
+        <div style={styles.card}>
+          <h2>{mode === 'ONLINE_HOST' ? t.createRoom : t.joinRoom}</h2>
+          {mode === 'ONLINE_HOST' ? (
+            <div style={styles.lobbyBox}>
+              <p>{t.waiting}</p>
+              <div style={styles.codeBox}>
+                <span>{peerId || 'Loading...'}</span>
+                <button onClick={() => { navigator.clipboard.writeText(peerId); setCopyFeedback(true); setTimeout(()=>setCopyFeedback(false), 2000); }}>
+                  {copyFeedback ? t.copied : t.copy}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={styles.lobbyBox}>
+              <input style={styles.input} placeholder="Room ID" value={joinId} onChange={e => setJoinId(e.target.value)} />
+              <button style={styles.actionBtn} onClick={joinGame}>{t.connect}</button>
+            </div>
+          )}
+          <button style={styles.textBtn} onClick={() => window.location.reload()}>{t.restart}</button>
         </div>
-        <button style={styles.backBtn} onClick={() => window.location.reload()}>Back</button>
       </div>
     );
   }
 
-  // --- VIEW: Lobby (Join) ---
-  if (mode === 'ONLINE_JOIN' && !conn) {
-    return (
-      <div style={styles.container}>
-        <h2>{t.joinRoom}</h2>
-        <input 
-          style={styles.input}
-          placeholder="Room ID" 
-          value={joinId} 
-          onChange={e => setJoinId(e.target.value)} 
-        />
-        <button style={styles.btn} onClick={joinGame}>{t.connect}</button>
-        <button style={styles.backBtn} onClick={() => window.location.reload()}>Back</button>
-      </div>
-    );
-  }
-
-  // --- VIEW: Game Board ---
+  // 3. GAME
   return (
     <div style={styles.gameContainer}>
-      <div style={styles.header}>
-         <h3>{t.title}</h3>
-         <button onClick={() => setLang(l => l==='KO'?'EN':'KO')}>{lang}</button>
+      {/* Top Bar */}
+      <div style={styles.topBar}>
+        <button style={styles.smallBtn} onClick={() => window.location.reload()}>⬅</button>
+        <span style={{fontWeight:'bold'}}>{t.title}</span>
+        <button style={styles.smallBtn} onClick={() => setShowRules(!showRules)}>❓</button>
       </div>
 
-      <div style={styles.statusPanel}>
-        <div style={{...styles.playerCard, border: turn==='w'?'3px solid gold':'1px solid #ccc'}}>
-           <div>{t.status.white} {turn==='w' && '●'}</div>
-           <div>Logic: <b>{getCurrentLogic('w')}</b></div>
-        </div>
-        <div style={{...styles.playerCard, border: turn==='b'?'3px solid gold':'1px solid #ccc'}}>
-           <div>{t.status.black} {turn==='b' && '●'}</div>
-           <div>Logic: <b>{getCurrentLogic('b')}</b></div>
-        </div>
-      </div>
-
-      {winner && (
-        <div style={styles.winnerOverlay}>
-           <h2>{winner === 'w' ? t.status.white : t.status.black} {t.status.win}</h2>
-           <button onClick={resetGame}>{t.restart}</button>
+      {/* Rules Overlay */}
+      {showRules && (
+        <div style={styles.overlay} onClick={() => setShowRules(false)}>
+          <div style={styles.modal}>
+            <h3>{t.rules.btn}</h3>
+            <p>{t.rules.content}</p>
+          </div>
         </div>
       )}
 
-      <div style={styles.boardWrapper}>
+      {/* Winner Overlay */}
+      {winner && (
+        <div style={styles.overlay}>
+          <div style={{...styles.modal, borderColor: '#ffd700', borderWidth: 3}}>
+            <h2 style={{fontSize: '2rem'}}>🏆 {winner === 'w' ? t.status.white : t.status.black} {t.status.win}</h2>
+            <button style={styles.actionBtn} onClick={() => window.location.reload()}>{t.restart}</button>
+          </div>
+        </div>
+      )}
+
+      {/* Opponent Info */}
+      <div style={{...styles.playerInfo, opacity: turn === (myColor === 'w' ? 'b' : 'w') ? 1 : 0.5}}>
+        <span>{myColor === 'w' ? t.status.black : t.status.white}</span>
+        <span style={styles.badge}>{moveHistory[myColor === 'w' ? 'b' : 'w'] ? getLogicName(myColor === 'w' ? 'b' : 'w') : t.standard}</span>
+      </div>
+
+      {/* Board Area */}
+      <div style={styles.boardArea}>
         <Chessboard 
           position={fen} 
           onSquareClick={onSquareClick}
-          customSquareStyles={getSquareStyles(validMoves, selectedSquare, fen)}
           boardOrientation={myColor === 'b' ? 'black' : 'white'}
+          customSquareStyles={getSquareStyles(validMoves, selectedSquare, fen)}
         />
       </div>
 
-      <div style={styles.rules}>
-         <h4>{t.rules.title}</h4>
-         <ul>
-           <li>{t.rules.core}</li>
-           <li>{t.rules.pawn}</li>
-           <li>{t.rules.win}</li>
-         </ul>
-         {mode !== 'LOCAL' && <div style={{color:'blue'}}>{conn ? t.connected : t.waiting}</div>}
+      {/* My Info */}
+      <div style={{...styles.playerInfo, opacity: turn === myColor || myColor === 'BOTH' ? 1 : 0.5, marginTop: 10}}>
+        <span>{myColor === 'w' ? t.status.white : (myColor === 'b' ? t.status.black : (turn === 'w' ? t.status.white : t.status.black))}</span>
+        <span style={{...styles.badge, background: '#007bff', color: '#fff'}}>
+          {moveHistory[turn] ? getLogicName(turn) : t.standard}
+        </span>
       </div>
+      
+      <div style={styles.turnIndicator}>
+        {turn === myColor || myColor === 'BOTH' ? (turn === 'w' ? "⬜ White's Turn" : "⬛ Black's Turn") : t.status.oppTurn}
+      </div>
+
     </div>
   );
 }
@@ -485,30 +425,42 @@ export default function App() {
 // STYLES
 const getSquareStyles = (moves, selected, fen) => {
   const s = {};
-  moves.forEach(m => {
-     const p = getPiece(fen, m);
-     s[m] = { 
-       background: p ? 'radial-gradient(circle, rgba(255,0,0,0.5) 20%, transparent 20%)' 
-                     : 'radial-gradient(circle, rgba(0,0,0,0.2) 20%, transparent 20%)',
-       borderRadius: '50%'
-     };
-  });
-  if(selected) s[selected] = { background: 'rgba(255, 255, 0, 0.4)' };
+  if(moves) {
+      moves.forEach(m => {
+        const p = getPiece(fen, m);
+        s[m] = { 
+          background: p ? 'radial-gradient(circle, rgba(255,0,0,0.6) 40%, transparent 40%)' 
+                        : 'radial-gradient(circle, rgba(0,0,0,0.2) 20%, transparent 20%)',
+        };
+      });
+  }
+  if(selected) s[selected] = { backgroundColor: 'rgba(255, 215, 0, 0.5)' };
   return s;
 };
 
 const styles = {
-  container: { display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100vh', fontFamily:'sans-serif', gap: 20 },
-  gameContainer: { display:'flex', flexDirection:'column', alignItems:'center', padding:20, fontFamily:'sans-serif' },
-  menu: { display:'flex', flexDirection:'column', gap: 10 },
-  btn: { padding: '10px 20px', fontSize: '1rem', cursor: 'pointer', background:'#333', color:'#fff', border:'none', borderRadius:5 },
-  backBtn: { marginTop: 20, cursor:'pointer', background:'transparent', border:'none', textDecoration:'underline' },
-  box: { padding: 20, background: '#eee', borderRadius: 5 },
-  input: { padding: 10, fontSize: '1rem', marginBottom: 10 },
-  header: { display:'flex', justifyContent:'space-between', width:'100%', maxWidth:500, marginBottom:10 },
-  statusPanel: { display:'flex', gap:20, marginBottom:10, width:'100%', maxWidth:500 },
-  playerCard: { flex:1, padding:10, borderRadius:8, background:'#f9f9f9', textAlign:'center' },
-  boardWrapper: { width:'100%', maxWidth:500, height:'auto' },
-  rules: { marginTop:20, maxWidth:500, fontSize:'0.9rem', lineHeight:1.5, background:'#fff', padding:15, borderRadius:8, boxShadow:'0 2px 5px rgba(0,0,0,0.1)' },
-  winnerOverlay: { position:'absolute', top:'40%', background:'rgba(0,0,0,0.8)', color:'#fff', padding:30, borderRadius:10, zIndex:100, textAlign:'center' }
+  container: { height: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f0f2f5', padding: 20 },
+  card: { background: '#fff', padding: 30, borderRadius: 20, boxShadow: '0 4px 15px rgba(0,0,0,0.1)', width: '100%', maxWidth: 400, textAlign: 'center' },
+  title: { fontSize: '1.8rem', margin: '0 0 10px 0', color: '#333' },
+  menuGrid: { display: 'flex', flexDirection: 'column', gap: 15 },
+  menuBtn: { padding: 15, fontSize: '1.1rem', border: 'none', borderRadius: 12, background: '#333', color: '#fff', cursor: 'pointer', fontWeight: 'bold' },
+  langBtn: { marginTop: 20, background: 'transparent', border: '1px solid #ddd', padding: '8px 15px', borderRadius: 20, cursor: 'pointer' },
+  
+  gameContainer: { height: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', background: '#fff' },
+  topBar: { width: '100%', display: 'flex', justifyContent: 'space-between', padding: '15px 20px', alignItems: 'center', background: '#f8f9fa', borderBottom: '1px solid #eee' },
+  smallBtn: { background: 'transparent', border: 'none', fontSize: '1.2rem', cursor: 'pointer' },
+  
+  boardArea: { width: '100vw', maxWidth: '500px', aspectRatio: '1/1', padding: 10 },
+  playerInfo: { width: '90%', maxWidth: '480px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', background: '#f8f9fa', borderRadius: 10, margin: '5px 0' },
+  badge: { padding: '5px 10px', borderRadius: 15, background: '#eee', fontSize: '0.9rem', fontWeight: 'bold' },
+  turnIndicator: { marginTop: 10, fontSize: '1.2rem', fontWeight: 'bold', color: '#333' },
+  
+  overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999 },
+  modal: { background: '#fff', padding: 30, borderRadius: 15, width: '80%', maxWidth: 350, textAlign: 'center' },
+  
+  lobbyBox: { margin: '20px 0', textAlign: 'left' },
+  codeBox: { display: 'flex', justifyContent: 'space-between', background: '#f1f3f5', padding: 10, borderRadius: 8, marginTop: 5, alignItems: 'center' },
+  input: { width: '100%', padding: 12, borderRadius: 8, border: '1px solid #ddd', marginBottom: 10, fontSize: '1rem' },
+  actionBtn: { width: '100%', padding: 12, background: '#007bff', color: '#fff', border: 'none', borderRadius: 8, fontSize: '1rem', cursor: 'pointer' },
+  textBtn: { background: 'transparent', border: 'none', color: '#666', marginTop: 15, cursor: 'pointer', textDecoration: 'underline' }
 };

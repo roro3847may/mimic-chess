@@ -2,17 +2,14 @@
   "name": "mimic-chess-0.2",
   "version": "0.1.0",
   "private": true,
-  "homepage": "https://roro3847may.github.io/mimic-chess",
+  "homepage": ".", 
   "dependencies": {
     "chess.js": "^1.0.0-beta.8",
-    "peerjs": "^1.5.5",
+    "peerjs": "^1.5.2",
     "react": "^18.2.0",
     "react-chessboard": "^4.4.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1"
-  },
-  "devDependencies": {
-    "gh-pages": "^6.1.1"
   },
   "scripts": {
     "start": "react-scripts start",
@@ -23,21 +20,13 @@
     "deploy": "gh-pages -d build"
   },
   "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
+    "extends": [ "react-app", "react-app/jest" ]
   },
   "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
+    "production": [ ">0.2%", "not dead", "not op_mini all" ],
+    "development": [ "last 1 chrome version", "last 1 firefox version", "last 1 safari version" ]
+  },
+  "devDependencies": {
+    "gh-pages": "^6.1.1"
   }
 }
