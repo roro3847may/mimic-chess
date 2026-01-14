@@ -1,0 +1,10 @@
+{
+  "files": {
+    "main.js": "/mimic-chess/static/js/main.99268904.js",
+    "index.html": "/mimic-chess/index.html",
+    "main.99268904.js.map": "/mimic-chess/static/js/main.99268904.js.map"
+  },
+  "entrypoints": [
+    "static/js/main.99268904.js"
+  ]
+}
